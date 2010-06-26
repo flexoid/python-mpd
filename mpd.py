@@ -38,135 +38,142 @@ class CommandError(MPDError):
 class CommandListError(MPDError):
     pass
 
-
 class _NotConnected(object):
     def __getattr__(self, attr):
         return self._dummy
 
-    def _dummy(*args):
+    def _dummy(self, *args):
         raise ConnectionError("Not connected")
 
-class MPDClient(object):
+_commands = {
+    # Admin Commands
+    "disableoutput":    '_getnone',
+    "enableoutput":     '_getnone',
+    "kill":             None,
+    "update":           '_getitem',
+    # Informational Commands
+    "status":           '_getobject',
+    "stats":            '_getobject',
+    "outputs":          '_getoutputs',
+    "commands":         '_getlist',
+    "notcommands":      '_getlist',
+    "tagtypes":         '_getlist',
+    "urlhandlers":      '_getlist',
+    # Database Commands
+    "find":             '_getsongs',
+    "list":             '_getlist',
+    "listall":          '_getdatabase',
+    "listallinfo":      '_getdatabase',
+    "lsinfo":           '_getdatabase',
+    "search":           '_getsongs',
+    "count":            '_getobject',
+    # Playlist Commands
+    "add":              '_getnone',
+    "addid":            '_getitem',
+    "clear":            '_getnone',
+    "currentsong":      '_getobject',
+    "delete":           '_getnone',
+    "deleteid":         '_getnone',
+    "load":             '_getnone',
+    "rename":           '_getnone',
+    "move":             '_getnone',
+    "moveid":           '_getnone',
+    "playlist":         '_getplaylist',
+    "playlistinfo":     '_getsongs',
+    "playlistid":       '_getsongs',
+    "plchanges":        '_getsongs',
+    "plchangesposid":   '_getchanges',
+    "rm":               '_getnone',
+    "save":             '_getnone',
+    "shuffle":          '_getnone',
+    "swap":             '_getnone',
+    "swapid":           '_getnone',
+    "listplaylist":     '_getlist',
+    "listplaylistinfo": '_getsongs',
+    "playlistadd":      '_getnone',
+    "playlistclear":    '_getnone',
+    "playlistdelete":   '_getnone',
+    "playlistmove":     '_getnone',
+    "playlistfind":     '_getsongs',
+    "playlistsearch":   '_getsongs',
+    # Playback Commands
+    "crossfade":        '_getnone',
+    "next":             '_getnone',
+    "pause":            '_getnone',
+    "play":             '_getnone',
+    "playid":           '_getnone',
+    "previous":         '_getnone',
+    "random":           '_getnone',
+    "repeat":           '_getnone',
+    "seek":             '_getnone',
+    "seekid":           '_getnone',
+    "setvol":           '_getnone',
+    "stop":             '_getnone',
+    "volume":           '_getnone',
+    # Miscellaneous Commands
+    "clearerror":       '_getnone',
+    "close":            None,
+    "password":         '_getnone',
+    "ping":             '_getnone',
+}
+
+
+def bound_decorator(self, function):
+    def decorator(*args, **kwargs):
+        return function(self, *args, **kwargs)
+    return decorator
+
+
+
+class MPDClientMeta(type):
+    def __new__(cls, name, bases, attributes):
+        new_attributes = dict(attributes)
+        docommand = attributes['_docommand']
+        def newFunction(name, returnValue):
+            def decorator(self, *args):
+                return docommand(self, name, args, bound_decorator(self, returnValue))
+            return decorator
+        for key, value in _commands.items():
+            returnValue = None if value is None else attributes[value]
+            new_attributes[key] = newFunction(key, returnValue)
+        return type.__new__(cls, name, bases, new_attributes)
+
+
+
+class MPDClient(metaclass = MPDClientMeta):
     def __init__(self):
         self.iterate = False
         self._reset()
-        self._commands = {
-            # Status Commands
-            "clearerror":       self._fetch_nothing,
-            "currentsong":      self._fetch_object,
-            "idle":             self._fetch_list,
-            "noidle":           None,
-            "status":           self._fetch_object,
-            "stats":            self._fetch_object,
-            # Playback Option Commands
-            "consume":          self._fetch_nothing,
-            "crossfade":        self._fetch_nothing,
-            "random":           self._fetch_nothing,
-            "repeat":           self._fetch_nothing,
-            "setvol":           self._fetch_nothing,
-            "single":           self._fetch_nothing,
-            "volume":           self._fetch_nothing,
-            # Playback Control Commands
-            "next":             self._fetch_nothing,
-            "pause":            self._fetch_nothing,
-            "play":             self._fetch_nothing,
-            "playid":           self._fetch_nothing,
-            "previous":         self._fetch_nothing,
-            "seek":             self._fetch_nothing,
-            "seekid":           self._fetch_nothing,
-            "stop":             self._fetch_nothing,
-            # Playlist Commands
-            "add":              self._fetch_nothing,
-            "addid":            self._fetch_item,
-            "clear":            self._fetch_nothing,
-            "delete":           self._fetch_nothing,
-            "deleteid":         self._fetch_nothing,
-            "move":             self._fetch_nothing,
-            "moveid":           self._fetch_nothing,
-            "playlist":         self._fetch_playlist,
-            "playlistfind":     self._fetch_songs,
-            "playlistid":       self._fetch_songs,
-            "playlistinfo":     self._fetch_songs,
-            "playlistsearch":   self._fetch_songs,
-            "plchanges":        self._fetch_songs,
-            "plchangesposid":   self._fetch_changes,
-            "shuffle":          self._fetch_nothing,
-            "swap":             self._fetch_nothing,
-            "swapid":           self._fetch_nothing,
-            # Stored Playlist Commands
-            "listplaylist":     self._fetch_list,
-            "listplaylistinfo": self._fetch_songs,
-            "listplaylists":    self._fetch_playlists,
-            "load":             self._fetch_nothing,
-            "playlistadd":      self._fetch_nothing,
-            "playlistclear":    self._fetch_nothing,
-            "playlistdelete":   self._fetch_nothing,
-            "playlistmove":     self._fetch_nothing,
-            "rename":           self._fetch_nothing,
-            "rm":               self._fetch_nothing,
-            "save":             self._fetch_nothing,
-            # Database Commands
-            "count":            self._fetch_object,
-            "find":             self._fetch_songs,
-            "list":             self._fetch_list,
-            "listall":          self._fetch_database,
-            "listallinfo":      self._fetch_database,
-            "lsinfo":           self._fetch_database,
-            "search":           self._fetch_songs,
-            "update":           self._fetch_item,
-            # Connection Commands
-            "close":            None,
-            "kill":             None,
-            "password":         self._fetch_nothing,
-            "ping":             self._fetch_nothing,
-            # Audio Output Commands
-            "disableoutput":    self._fetch_nothing,
-            "enableoutput":     self._fetch_nothing,
-            "outputs":          self._fetch_outputs,
-            # Reflection Commands
-            "commands":         self._fetch_list,
-            "notcommands":      self._fetch_list,
-            "tagtypes":         self._fetch_list,
-            "urlhandlers":      self._fetch_list,
-        }
 
-    def __getattr__(self, attr):
-        try:
-            retval = self._commands[attr]
-        except KeyError:
-            raise AttributeError("'%s' object has no attribute '%s'" %
-                                 (self.__class__.__name__, attr))
-        return lambda *args: self._execute(attr, args, retval)
-
-    def _execute(self, command, args, retval):
-        if self._command_list is not None and not callable(retval):
+    def _docommand(self, command, args, retval):
+        if self._commandlist is not None and not hasattr(retval, '__call__'):
             raise CommandListError("%s not allowed in command list" % command)
-        self._write_command(command, args)
-        if self._command_list is None:
-            if callable(retval):
+        self._writecommand(command, args)
+        if self._commandlist is None:
+            if hasattr(retval, '__call__'):
                 return retval()
             return retval
-        self._command_list.append(retval)
+        self._commandlist.append(retval)
 
-    def _write_line(self, line):
-        self._wfile.write("%s\n" % line)
+    def _writeline(self, line):
+        self._wfile.write(("%s\n" % line).encode('utf-8'))
         self._wfile.flush()
 
-    def _write_command(self, command, args=[]):
+    def _writecommand(self, command, args=[]):
         parts = [command]
         for arg in args:
             parts.append('"%s"' % escape(str(arg)))
-        self._write_line(" ".join(parts))
+        self._writeline(" ".join(parts))
 
-    def _read_line(self):
-        line = self._rfile.readline()
+    def _readline(self):
+        line = self._rfile.readline().decode('utf-8')
         if not line.endswith("\n"):
             raise ConnectionError("Connection lost while reading line")
         line = line.rstrip("\n")
         if line.startswith(ERROR_PREFIX):
             error = line[len(ERROR_PREFIX):].strip()
             raise CommandError(error)
-        if self._command_list is not None:
+        if self._commandlist is not None:
             if line == NEXT:
                 return
             if line == SUCCESS:
@@ -175,25 +182,25 @@ class MPDClient(object):
             return
         return line
 
-    def _read_pair(self, separator):
-        line = self._read_line()
+    def _readitem(self, separator):
+        line = self._readline()
         if line is None:
             return
-        pair = line.split(separator, 1)
-        if len(pair) < 2:
-            raise ProtocolError("Could not parse pair: '%s'" % line)
-        return pair
+        item = line.split(separator, 1)
+        if len(item) < 2:
+            raise ProtocolError("Could not parse item: '%s'" % line)
+        return item
 
-    def _read_pairs(self, separator=": "):
-        pair = self._read_pair(separator)
-        while pair:
-            yield pair
-            pair = self._read_pair(separator)
+    def _readitems(self, separator=": "):
+        item = self._readitem(separator)
+        while item:
+            yield item
+            item = self._readitem(separator)
         raise StopIteration
 
-    def _read_list(self):
+    def _readlist(self):
         seen = None
-        for key, value in self._read_pairs():
+        for key, value in self._readitems():
             if key != seen:
                 if seen is not None:
                     raise ProtocolError("Expected key '%s', got '%s'" %
@@ -202,14 +209,14 @@ class MPDClient(object):
             yield value
         raise StopIteration
 
-    def _read_playlist(self):
-        for key, value in self._read_pairs(":"):
+    def _readplaylist(self):
+        for key, value in self._readitems(":"):
             yield value
         raise StopIteration
 
-    def _read_objects(self, delimiters=[]):
+    def _readobjects(self, delimiters=[]):
         obj = {}
-        for key, value in self._read_pairs():
+        for key, value in self._readitems():
             key = key.lower()
             if obj:
                 if key in delimiters:
@@ -226,64 +233,61 @@ class MPDClient(object):
             yield obj
         raise StopIteration
 
-    def _read_command_list(self):
-        for retval in self._command_list:
+    def _readcommandlist(self):
+        for retval in self._commandlist:
             yield retval()
-        self._command_list = None
-        self._fetch_nothing()
+        self._commandlist = None
+        self._getnone()
         raise StopIteration
 
-    def _wrap_iterator(self, iterator):
+    def _wrapiterator(self, iterator):
         if not self.iterate:
             return list(iterator)
         return iterator
 
-    def _fetch_nothing(self):
-        line = self._read_line()
+    def _getnone(self):
+        line = self._readline()
         if line is not None:
             raise ProtocolError("Got unexpected return value: '%s'" % line)
 
-    def _fetch_item(self):
-        pairs = list(self._read_pairs())
-        if len(pairs) != 1:
+    def _getitem(self):
+        items = list(self._readitems())
+        if len(items) != 1:
             return
-        return pairs[0][1]
+        return items[0][1]
 
-    def _fetch_list(self):
-        return self._wrap_iterator(self._read_list())
+    def _getlist(self):
+        return self._wrapiterator(self._readlist())
 
-    def _fetch_playlist(self):
-        return self._wrap_iterator(self._read_playlist())
+    def _getplaylist(self):
+        return self._wrapiterator(self._readplaylist())
 
-    def _fetch_object(self):
-        objs = list(self._read_objects())
+    def _getobject(self):
+        objs = list(self._readobjects())
         if not objs:
             return {}
         return objs[0]
 
-    def _fetch_objects(self, delimiters):
-        return self._wrap_iterator(self._read_objects(delimiters))
+    def _getobjects(self, delimiters):
+        return self._wrapiterator(self._readobjects(delimiters))
 
-    def _fetch_songs(self):
-        return self._fetch_objects(["file"])
+    def _getsongs(self):
+        return self._getobjects(["file"])
 
-    def _fetch_playlists(self):
-        return self._fetch_objects(["playlist"])
+    def _getdatabase(self):
+        return self._getobjects(["file", "directory", "playlist"])
 
-    def _fetch_database(self):
-        return self._fetch_objects(["file", "directory", "playlist"])
+    def _getoutputs(self):
+        return self._getobjects(["outputid"])
 
-    def _fetch_outputs(self):
-        return self._fetch_objects(["outputid"])
+    def _getchanges(self):
+        return self._getobjects(["cpos"])
 
-    def _fetch_changes(self):
-        return self._fetch_objects(["cpos"])
-
-    def _fetch_command_list(self):
-        return self._wrap_iterator(self._read_command_list())
+    def _getcommandlist(self):
+        return self._wrapiterator(self._readcommandlist())
 
     def _hello(self):
-        line = self._rfile.readline()
+        line = self._rfile.readline().decode('utf-8')
         if not line.endswith("\n"):
             raise ConnectionError("Connection lost while reading MPD hello")
         line = line.rstrip("\n")
@@ -293,49 +297,34 @@ class MPDClient(object):
 
     def _reset(self):
         self.mpd_version = None
-        self._command_list = None
+        self._commandlist = None
         self._sock = None
         self._rfile = _NotConnected()
         self._wfile = _NotConnected()
 
-    def _connect_unix(self, path):
-        if not hasattr(socket, "AF_UNIX"):
-            raise ConnectionError("Unix domain sockets not supported "
-                                  "on this platform")
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(path)
-        return sock
-
-    def _connect_tcp(self, host, port):
+    def connect(self, host, port):
+        if self._sock:
+            raise ConnectionError("Already connected")
+        msg = "getaddrinfo returns an empty list"
         try:
             flags = socket.AI_ADDRCONFIG
         except AttributeError:
             flags = 0
-        msg = "getaddrinfo returns an empty list"
         for res in socket.getaddrinfo(host, port, socket.AF_UNSPEC,
                                       socket.SOCK_STREAM, socket.IPPROTO_TCP,
                                       flags):
             af, socktype, proto, canonname, sa = res
             try:
-                sock = socket.socket(af, socktype, proto)
-                sock.connect(sa)
-            except socket.error, msg:
-                if sock:
-                    sock.close()
-                sock = None
+                self._sock = socket.socket(af, socktype, proto)
+                self._sock.connect(sa)
+            except (socket.error, msg):
+                if self._sock:
+                    self._sock.close()
+                self._sock = None
                 continue
             break
-        if not sock:
+        if not self._sock:
             raise socket.error(msg)
-        return sock
-
-    def connect(self, host, port):
-        if self._sock:
-            raise ConnectionError("Already connected")
-        if host.startswith("/"):
-            self._sock = self._connect_unix(host)
-        else:
-            self._sock = self._connect_tcp(host, port)
         self._rfile = self._sock.makefile("rb")
         self._wfile = self._sock.makefile("wb")
         try:
@@ -351,16 +340,16 @@ class MPDClient(object):
         self._reset()
 
     def command_list_ok_begin(self):
-        if self._command_list is not None:
+        if self._commandlist is not None:
             raise CommandListError("Already in command list")
-        self._write_command("command_list_ok_begin")
-        self._command_list = []
+        self._writecommand("command_list_ok_begin")
+        self._commandlist = []
 
     def command_list_end(self):
-        if self._command_list is None:
+        if self._commandlist is None:
             raise CommandListError("Not in command list")
-        self._write_command("command_list_end")
-        return self._fetch_command_list()
+        self._writecommand("command_list_end")
+        return self._getcommandlist()
 
 
 def escape(text):
