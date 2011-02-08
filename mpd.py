@@ -72,6 +72,7 @@ _commands = {
     "addid":            '_getitem',
     "clear":            '_getnone',
     "currentsong":      '_getobject',
+    "idle":             '_getlist',
     "delete":           '_getnone',
     "deleteid":         '_getnone',
     "load":             '_getnone',
